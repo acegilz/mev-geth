@@ -610,3 +610,8 @@ func (es *EventSystem) eventLoop() {
 		}
 	}
 }
+
+// DIRECT PENDING LOGS API
+func (es *EventSystem) SubscribePendingLogs(crit ethereum.FilterQuery, logs chan []*types.Log) (*Subscription, error) {
+	return es.subscribePendingLogs(crit, logs), nil
+}

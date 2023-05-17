@@ -653,3 +653,12 @@ func (p *rpcProgress) toSyncProgress() *ethereum.SyncProgress {
 		HealingBytecode:     uint64(p.HealingBytecode),
 	}
 }
+
+// SubscribeFilterLogs subscribes to the results of a streaming filter query.
+func (ec *Client) SubscribePendingLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
+	arg, err := toFilterArg(q)
+	if err != nil {
+		return nil, err
+	}
+	return ec.c.EthSubscribe(ctx, ch, "pendingLogs", arg)
+}
