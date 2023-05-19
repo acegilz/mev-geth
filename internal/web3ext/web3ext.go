@@ -626,6 +626,11 @@ web3._extend({
 			call: 'eth_callBundle',
 			params: 6
 		}),
+		new web3._extend.Method({
+			name: 'simulateBundle',
+			call: 'eth_simulateBundle',
+			params: 1,
+		}),
 	],
 	properties: [
 		new web3._extend.Property({

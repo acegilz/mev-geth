@@ -2419,3 +2419,100 @@ func (s *BundleAPI) EstimateGasBundle(ctx context.Context, args EstimateGasBundl
 
 	return ret, nil
 }
+
+func (s *BundleAPI) SimulateBundle(ctx context.Context, args CallBundleArgs) ([]*types.Receipt, error) {
+	if len(args.Txs) == 0 {
+		return nil, errors.New("bundle missing txs")
+	}
+	if args.BlockNumber == 0 {
+		return nil, errors.New("bundle missing blockNumber")
+	}
+
+	var txs types.Transactions
+
+	for _, encodedTx := range args.Txs {
+		tx := new(types.Transaction)
+		if err := tx.UnmarshalBinary(encodedTx); err != nil {
+			return nil, err
+		}
+		txs = append(txs, tx)
+	}
+	defer func(start time.Time) { log.Debug("Executing EVM call finished", "runtime", time.Since(start)) }(time.Now())
+
+	timeoutMilliSeconds := int64(5000)
+	if args.Timeout != nil {
+		timeoutMilliSeconds = *args.Timeout
+	}
+	timeout := time.Millisecond * time.Duration(timeoutMilliSeconds)
+	state, parent, err := s.b.StateAndHeaderByNumberOrHash(ctx, args.StateBlockNumberOrHash)
+	if state == nil || err != nil {
+		return nil, err
+	}
+	blockNumber := big.NewInt(int64(args.BlockNumber))
+
+	timestamp := parent.Time + 1
+	if args.Timestamp != nil {
+		timestamp = *args.Timestamp
+	}
+	coinbase := parent.Coinbase
+	if args.Coinbase != nil {
+		coinbase = common.HexToAddress(*args.Coinbase)
+	}
+	difficulty := parent.Difficulty
+	if args.Difficulty != nil {
+		difficulty = args.Difficulty
+	}
+	gasLimit := parent.GasLimit
+	if args.GasLimit != nil {
+		gasLimit = *args.GasLimit
+	}
+	var baseFee *big.Int
+	if args.BaseFee != nil {
+		baseFee = args.BaseFee
+	} else if s.b.ChainConfig().IsLondon(big.NewInt(args.BlockNumber.Int64())) {
+		baseFee = misc.CalcBaseFee(s.b.ChainConfig(), parent)
+	}
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Number:     blockNumber,
+		GasLimit:   gasLimit,
+		Time:       timestamp,
+		Difficulty: difficulty,
+		Coinbase:   coinbase,
+		BaseFee:    baseFee,
+	}
+
+	// Setup context so it may be cancelled the call has completed
+	// or, in case of unmetered gas, setup a context with a timeout.
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	// Make sure the context is cancelled when the call has completed
+	// this makes sure resources are cleaned up.
+	defer cancel()
+
+	vmconfig := vm.Config{}
+
+	// Setup the gas pool (also for unmetered requests)
+	// and apply the message.
+	gp := new(core.GasPool).AddGas(math.MaxUint64)
+
+	n := 0
+	tx := txs[n]
+
+	state.Prepare(tx.Hash(), n)
+
+	receipt, execution, err := core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &header.GasUsed, vmconfig)
+
+	if err != nil || execution.Err != nil {
+		return nil, fmt.Errorf("err: %w; txhash %s", err, tx.Hash())
+
+	} else {
+		results := []*types.Receipt{receipt}
+
+		return results, nil
+	}
+}
