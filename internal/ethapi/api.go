@@ -2444,6 +2444,19 @@ func (s *BundleAPI) SimulateBundle(ctx context.Context, args CallBundleArgs) ([]
 		timeoutMilliSeconds = *args.Timeout
 	}
 	timeout := time.Millisecond * time.Duration(timeoutMilliSeconds)
+
+	// Setup context so it may be cancelled the call has completed
+	// or, in case of unmetered gas, setup a context with a timeout.
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	// Make sure the context is cancelled when the call has completed
+	// this makes sure resources are cleaned up.
+	defer cancel()
+
 	state, parent, err := s.b.StateAndHeaderByNumberOrHash(ctx, args.StateBlockNumberOrHash)
 	if state == nil || err != nil {
 		return nil, err
@@ -2482,18 +2495,6 @@ func (s *BundleAPI) SimulateBundle(ctx context.Context, args CallBundleArgs) ([]
 		BaseFee:    baseFee,
 	}
 
-	// Setup context so it may be cancelled the call has completed
-	// or, in case of unmetered gas, setup a context with a timeout.
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
-	}
-	// Make sure the context is cancelled when the call has completed
-	// this makes sure resources are cleaned up.
-	defer cancel()
-
 	vmconfig := vm.Config{}
 
 	// Setup the gas pool (also for unmetered requests)
@@ -2503,7 +2504,7 @@ func (s *BundleAPI) SimulateBundle(ctx context.Context, args CallBundleArgs) ([]
 	n := 0
 	tx := txs[n]
 
-	state.Prepare(tx.Hash(), n)
+	state.SetTxContext(tx.Hash(), n)
 
 	receipt, execution, err := core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &header.GasUsed, vmconfig)
 
